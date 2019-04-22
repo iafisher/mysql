@@ -53,8 +53,11 @@ enum StatementKind {
 }
 
 
+const ROW_ID_SIZE: usize = 4;
 const ROW_USERNAME_SIZE: usize = 32;
 const ROW_EMAIL_SIZE: usize = 255;
+const ROW_USERNAME_START: usize = ROW_ID_SIZE;
+const ROW_EMAIL_START: usize = ROW_USERNAME_START + ROW_USERNAME_SIZE;
 
 #[derive(Debug)]
 struct Row<'a> {
@@ -179,16 +182,29 @@ fn serialize_row(row: &Row, destination: &mut Vec<u8>, offset: usize) {
 
 
 fn deserialize_row(source: &Vec<u8>, offset: usize) -> Row {
-    let id: u32 = 
+    let id: u32 =
         (u32::from(source[offset]) << 24) +
         (u32::from(source[offset+1]) << 16) +
         (u32::from(source[offset+2]) << 8) +
         u32::from(source[offset+3]);
     // Using unchecked UTF-8 conversion because lazy.
     unsafe {
-        let username = str::from_utf8_unchecked(&source[offset+4..offset+4+ROW_USERNAME_SIZE]);
-        let email = str::from_utf8_unchecked(&source[offset+4+ROW_USERNAME_SIZE..offset+4+ROW_USERNAME_SIZE+ROW_EMAIL_SIZE]);
+        let username = str::from_utf8_unchecked(
+            deserialize_string(&source, offset+ROW_USERNAME_START, ROW_USERNAME_SIZE)
+        );
+        let email = str::from_utf8_unchecked(
+            deserialize_string(&source, offset+ROW_EMAIL_START, ROW_EMAIL_SIZE)
+        );
         return Row { id, username, email };
+    }
+}
+
+
+fn deserialize_string(source: &Vec<u8>, offset: usize, length: usize) -> &[u8] {
+    let nullpos = source[offset..].iter().position(|&x| x == 0);
+    match nullpos {
+        Some(p) if p < length => &source[offset..(offset + p)],
+        _ => &source[offset..offset+length],
     }
 }
 
