@@ -15,7 +15,7 @@ fn main() {
 
         let trimmed = line.as_str().trim();
         if trimmed.starts_with(".") {
-            match do_meta_command(trimmed) {
+            match do_meta_command(trimmed, &table) {
                 MetaCommandResult::Success => (),
                 MetaCommandResult::Exit => break,
                 MetaCommandResult::Unrecognized => {
@@ -145,6 +145,7 @@ fn execute_insert(statement: &Statement, table: &mut Table) -> Result<(), &'stat
         Some(ref p) => serialize_row(p, &mut table.pages[page_num], offset),
         None => return Err("no row to insert"),
     }
+    table.nrows += 1;
     Ok(())
 }
 
@@ -178,7 +179,12 @@ fn serialize_row(row: &Row, destination: &mut Vec<u8>, offset: usize) {
 
 
 fn deserialize_row(source: &Vec<u8>, offset: usize) -> Row {
-    let id: u32 = (u32::from(source[offset]) << 24) + (u32::from(source[offset+1]) << 16) + (u32::from(source[offset+2]) << 8) + u32::from(source[offset+3]);
+    let id: u32 = 
+        (u32::from(source[offset]) << 24) +
+        (u32::from(source[offset+1]) << 16) +
+        (u32::from(source[offset+2]) << 8) +
+        u32::from(source[offset+3]);
+    // Using unchecked UTF-8 conversion because lazy.
     unsafe {
         let username = str::from_utf8_unchecked(&source[offset+4..offset+4+ROW_USERNAME_SIZE]);
         let email = str::from_utf8_unchecked(&source[offset+4+ROW_USERNAME_SIZE..offset+4+ROW_USERNAME_SIZE+ROW_EMAIL_SIZE]);
@@ -209,9 +215,12 @@ enum MetaCommandResult {
 }
 
 
-fn do_meta_command(command: &str) -> MetaCommandResult {
+fn do_meta_command(command: &str, table: &Table) -> MetaCommandResult {
     if command == ".exit" {
         return MetaCommandResult::Exit;
+    } else if command == ".size" {
+        println!("{} row(s)", table.nrows);
+        return MetaCommandResult::Success;
     } else {
         return MetaCommandResult::Unrecognized;
     }
