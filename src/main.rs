@@ -1,8 +1,7 @@
 use std::io;
 use std::io::prelude::*;
 use std::iter;
-use std::mem;
-use std::ptr;
+use std::str;
 
 
 fn main() {
@@ -151,12 +150,22 @@ fn serialize_row(row: &Row, destination: &mut Vec<u8>, offset: usize) {
 
     let padding = iter::repeat(0).take(ROW_USERNAME_SIZE - row.username.len());
     for (i, c) in row.username.bytes().chain(padding).enumerate() {
-        destination[offset+3+i] = c;
+        destination[offset+4+i] = c;
     }
 
     let padding = iter::repeat(0).take(ROW_EMAIL_SIZE - row.email.len());
     for (i, c) in row.email.bytes().chain(padding).enumerate() {
-        destination[offset+3+ROW_USERNAME_SIZE+i] = c;
+        destination[offset+4+ROW_USERNAME_SIZE+i] = c;
+    }
+}
+
+
+fn deserialize_row(source: &Vec<u8>, offset: usize) -> Row {
+    let id: u32 = (u32::from(source[offset]) << 24) + (u32::from(source[offset+1]) << 16) + (u32::from(source[offset+2]) << 8) + u32::from(source[offset+3]);
+    unsafe {
+        let username = str::from_utf8_unchecked(&source[offset+4..offset+4+ROW_USERNAME_SIZE]);
+        let email = str::from_utf8_unchecked(&source[offset+4+ROW_USERNAME_SIZE..offset+4+ROW_USERNAME_SIZE+ROW_EMAIL_SIZE]);
+        return Row { id, username, email };
     }
 }
 
