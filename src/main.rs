@@ -128,6 +128,14 @@ impl Table {
 
 
 fn execute_statement(statement: &Statement, table: &mut Table) -> Result<(), &'static str> {
+    match statement.kind {
+        StatementKind::Insert => execute_insert(statement, table),
+        StatementKind::Select => execute_select(statement, table),
+    }
+}
+
+
+fn execute_insert(statement: &Statement, table: &mut Table) -> Result<(), &'static str> {
     if table.nrows >= TABLE_MAX_ROWS {
         return Err("table is full");
     }
@@ -136,6 +144,15 @@ fn execute_statement(statement: &Statement, table: &mut Table) -> Result<(), &'s
     match statement.row_to_insert {
         Some(ref p) => serialize_row(p, &mut table.pages[page_num], offset),
         None => return Err("no row to insert"),
+    }
+    Ok(())
+}
+
+
+fn execute_select(statement: &Statement, mut table: &mut Table) -> Result<(), &'static str> {
+    for i in 0..table.nrows {
+        let (page_num, offset) = row_slot(&mut table, i);
+        println!("{:?}", deserialize_row(&table.pages[page_num], offset));
     }
     Ok(())
 }
