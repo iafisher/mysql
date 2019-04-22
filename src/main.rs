@@ -5,25 +5,8 @@ use std::mem;
 use std::ptr;
 
 
-// Initialize an array with non-Copy types.
-// Courtesy of https://stackoverflow.com/questions/28656387/
-macro_rules! make_array {
-    ($n:expr, $constructor:expr) => {{
-        let mut items: [_; $n] = mem::uninitialized();
-        for (i, place) in items.iter_mut().enumerate() {
-            ptr::write(place, $constructor(i));
-        }
-        items
-    }}
-}
-
-
 fn main() {
-    let mut table = Table {
-        nrows: 0, 
-        // pages: [None; TABLE_MAX_PAGES]
-        pages: unsafe { make_array!(TABLE_MAX_PAGES, |_| None) },
-    };
+    let mut table = Table::new();
 
     let mut line = String::new();
     loop {
@@ -57,12 +40,14 @@ fn main() {
 }
 
 
+#[derive(Debug)]
 struct Statement<'a> {
     kind: StatementKind,
     row_to_insert: Option<Box<Row<'a>>>,
 }
 
 
+#[derive(Debug)]
 enum StatementKind {
     Insert,
     Select,
@@ -72,6 +57,7 @@ enum StatementKind {
 const ROW_USERNAME_SIZE: usize = 32;
 const ROW_EMAIL_SIZE: usize = 255;
 
+#[derive(Debug)]
 struct Row<'a> {
     id: u32,
     username: &'a str,
@@ -123,9 +109,22 @@ const ROWS_PER_PAGE: usize = PAGE_SIZE / ROW_SIZE;
 const TABLE_MAX_ROWS: usize = ROWS_PER_PAGE * TABLE_MAX_PAGES;
 
 
-struct Table<'a> {
+struct Table {
     nrows: usize,
-    pages: [Option<Box<&'a mut [u8]>>; TABLE_MAX_PAGES],
+    pages: Vec<Vec<u8>>,
+}
+
+
+impl Table {
+    fn new() -> Table {
+        let mut tab = Table { nrows: 0, pages: Vec::with_capacity(TABLE_MAX_PAGES) };
+
+        for _ in 0..TABLE_MAX_PAGES {
+            tab.pages.push(Vec::new());
+        }
+
+        tab
+    }
 }
 
 
@@ -135,16 +134,15 @@ fn execute_statement(statement: &Statement, table: &mut Table) -> Result<(), &'s
     }
 
     let (page_num, offset) = row_slot(table, table.nrows);
-    serialize_row(
-        &statement.row_to_insert.unwrap(),
-        &mut table.pages[page_num].unwrap(),
-        offset
-    );
+    match statement.row_to_insert {
+        Some(ref p) => serialize_row(p, &mut table.pages[page_num], offset),
+        None => return Err("no row to insert"),
+    }
     Ok(())
 }
 
 
-fn serialize_row(row: &Row, destination: &mut [u8], offset: usize) {
+fn serialize_row(row: &Row, destination: &mut Vec<u8>, offset: usize) {
     let id_bytes = row.id.to_be_bytes();
     destination[offset] = id_bytes[0];
     destination[offset+1] = id_bytes[1];
@@ -166,9 +164,11 @@ fn serialize_row(row: &Row, destination: &mut [u8], offset: usize) {
 fn row_slot<'a>(table: &'a mut Table, row_num: usize) -> (usize, usize) {
     let page_num = row_num / ROWS_PER_PAGE;
 
-    if table.pages[page_num].is_none() {
-        let page = &mut [0; PAGE_SIZE];
-        table.pages[page_num] = Some(Box::new(page));
+    if table.pages[page_num].len() == 0 {
+        table.pages[page_num].reserve(PAGE_SIZE);
+        for _ in 0..PAGE_SIZE {
+            table.pages[page_num].push(0);
+        }
     }
 
     let row_offset = row_num % ROWS_PER_PAGE;
