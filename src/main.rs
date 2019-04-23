@@ -118,8 +118,8 @@ struct Table {
 
 
 impl Table {
-    fn new() -> Table {
-        let mut tab = Table { nrows: 0, pages: Vec::with_capacity(TABLE_MAX_PAGES) };
+    fn new() -> Self {
+        let mut tab = Self { nrows: 0, pages: Vec::with_capacity(TABLE_MAX_PAGES) };
 
         for _ in 0..TABLE_MAX_PAGES {
             tab.pages.push(Vec::new());
