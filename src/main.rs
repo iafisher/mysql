@@ -241,3 +241,33 @@ fn do_meta_command(command: &str, table: &Table) -> MetaCommandResult {
         return MetaCommandResult::Unrecognized;
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn insert_and_retrieve() {
+        let mut table = Table::new();
+
+        let insert = Statement {
+            kind: StatementKind::Insert,
+            row_to_insert: Some(Box::new(Row {
+                id: 1,
+                username: "jdoe",
+                email: "jdoe@example.com",
+            })),
+        };
+
+        let mut result = execute_statement(&insert, &mut table);
+        assert!(result.is_ok());
+
+        let select = Statement {
+            kind: StatementKind::Select,
+            row_to_insert: None,
+        };
+
+        result = execute_statement(&select, &mut table);
+        assert!(result.is_ok());
+    }
+}
