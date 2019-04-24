@@ -23,14 +23,13 @@ fn main() {
                 }
             }
         } else {
-            match prepare_statement(trimmed) {
-                Some(statement) => {
-                    match execute_statement(&statement, &mut table) {
-                        Ok(_) => (),
-                        Err(e) => println!("Error: {}", e),
-                    }
+            if let Some(statement) = prepare_statement(trimmed) {
+                let result = execute_statement(&statement, &mut table);
+                if let Err(e) = result {
+                    println!("Error: {}", e);
                 }
-                None => println!("Error: could not parse statement `{}`", trimmed),
+            } else {
+                println!("Error: could not parse statement `{}`", trimmed);
             }
         }
 
@@ -144,10 +143,11 @@ fn execute_insert(statement: &Statement, table: &mut Table) -> Result<(), &'stat
     }
 
     let (page_num, offset) = row_slot(table, table.nrows);
-    match statement.row_to_insert {
-        Some(ref p) => serialize_row(p, &mut table.pages[page_num], offset),
-        None => return Err("no row to insert"),
-    }
+    serialize_row(
+        statement.row_to_insert.as_ref().unwrap(),
+        &mut table.pages[page_num],
+        offset
+    );
     table.nrows += 1;
     Ok(())
 }
