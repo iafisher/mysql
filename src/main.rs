@@ -1,3 +1,15 @@
+/**
+ * A basic SQLite clone in Rust.
+ *
+ * Based on "Let's Build a Simple Database" tutorial by cstack.
+ * https://cstack.github.io/db_tutorial/
+ *
+ * The main data structure is a Table, which is array of fixed-size (4096 byte) pages of binary
+ * data.
+ *
+ * Author:  Ian Fisher (iafisher@protonmail.com)
+ * Version: May 2019
+ */
 use std::io;
 use std::io::prelude::*;
 use std::iter;
@@ -15,6 +27,7 @@ fn main() {
 
         let trimmed = line.as_str().trim();
         if trimmed.starts_with(".") {
+            // Handle meta-commands.
             match do_meta_command(trimmed, &table) {
                 MetaCommandResult::Success => (),
                 MetaCommandResult::Exit => break,
@@ -23,6 +36,7 @@ fn main() {
                 }
             }
         } else {
+            // Handle SQL commands.
             if let Some(statement) = prepare_statement(trimmed) {
                 let result = execute_statement(&statement, &mut table);
                 if let Err(e) = result {
@@ -66,6 +80,7 @@ struct Row<'a> {
 }
 
 
+/// Parse a string into a SQL statement.
 fn prepare_statement(command: &str) -> Option<Statement> {
     if command.starts_with("insert ") {
         let words: Vec<&str> = command.split_ascii_whitespace().collect();
@@ -102,13 +117,14 @@ fn prepare_statement(command: &str) -> Option<Statement> {
 }
 
 
-const TABLE_MAX_PAGES: usize = 100;
-const PAGE_SIZE: usize = 4096;
-const ROW_SIZE: usize = 291;
+const TABLE_MAX_PAGES: usize = 100;  // An arbitrary maximum.
+const PAGE_SIZE: usize = 4096;  // Equivalent to virtual memory page size on many OSes.
+const ROW_SIZE: usize = 291;  // Calculated from the Row struct.
 const ROWS_PER_PAGE: usize = PAGE_SIZE / ROW_SIZE;
 const TABLE_MAX_ROWS: usize = ROWS_PER_PAGE * TABLE_MAX_PAGES;
 
 
+/// Represents the binary format of a database table.
 struct Table {
     nrows: usize,
     pages: Vec<Vec<u8>>,
@@ -128,6 +144,7 @@ impl Table {
 }
 
 
+/// Execute a prepared statement on the database.
 fn execute_statement(statement: &Statement, table: &mut Table) -> Result<(), &'static str> {
     match statement.kind {
         StatementKind::Insert => execute_insert(statement, table),
@@ -136,6 +153,7 @@ fn execute_statement(statement: &Statement, table: &mut Table) -> Result<(), &'s
 }
 
 
+/// Execute an INSERT statement.
 fn execute_insert(statement: &Statement, table: &mut Table) -> Result<(), &'static str> {
     if table.nrows >= TABLE_MAX_ROWS {
         return Err("table is full");
@@ -152,6 +170,7 @@ fn execute_insert(statement: &Statement, table: &mut Table) -> Result<(), &'stat
 }
 
 
+/// Execute a SELECT statement.
 fn execute_select(statement: &Statement, mut table: &mut Table) -> Result<(), &'static str> {
     for i in 0..table.nrows {
         let (page_num, offset) = row_slot(&mut table, i);
@@ -161,6 +180,7 @@ fn execute_select(statement: &Statement, mut table: &mut Table) -> Result<(), &'
 }
 
 
+/// Write a row to the destination buffer.
 fn serialize_row(row: &Row, destination: &mut Vec<u8>, offset: usize) {
     let id_bytes = row.id.to_be_bytes();
     destination[offset] = id_bytes[0];
@@ -180,12 +200,14 @@ fn serialize_row(row: &Row, destination: &mut Vec<u8>, offset: usize) {
 }
 
 
+/// Read a row from the source buffer.
 fn deserialize_row(source: &Vec<u8>, offset: usize) -> Row {
     let id: u32 =
         (u32::from(source[offset]) << 24) +
         (u32::from(source[offset+1]) << 16) +
         (u32::from(source[offset+2]) << 8) +
         u32::from(source[offset+3]);
+
     // Using unchecked UTF-8 conversion because lazy.
     unsafe {
         let username = str::from_utf8_unchecked(
@@ -199,6 +221,7 @@ fn deserialize_row(source: &Vec<u8>, offset: usize) -> Row {
 }
 
 
+/// Helper function to read a slice of bytes of an expected length from a source buffer.
 fn deserialize_string(source: &Vec<u8>, offset: usize, length: usize) -> &[u8] {
     let nullpos = source[offset..].iter().position(|&x| x == 0);
     match nullpos {
@@ -208,6 +231,8 @@ fn deserialize_string(source: &Vec<u8>, offset: usize, length: usize) -> &[u8] {
 }
 
 
+/// Return (page number, byte offset) for the given row number. Also allocates a page if the
+/// row requested would be in an unallocated page (which is why Table is mutable).
 fn row_slot<'a>(table: &'a mut Table, row_num: usize) -> (usize, usize) {
     let page_num = row_num / ROWS_PER_PAGE;
 
@@ -230,6 +255,7 @@ enum MetaCommandResult {
 }
 
 
+/// Execute a meta-command (i.e., a non-SQL statement in the shell).
 fn do_meta_command(command: &str, table: &Table) -> MetaCommandResult {
     if command == ".exit" {
         return MetaCommandResult::Exit;
@@ -240,6 +266,7 @@ fn do_meta_command(command: &str, table: &Table) -> MetaCommandResult {
         return MetaCommandResult::Unrecognized;
     }
 }
+
 
 #[cfg(test)]
 mod test {
