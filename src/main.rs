@@ -10,14 +10,18 @@
  * Author:  Ian Fisher (iafisher@protonmail.com)
  * Version: May 2019
  */
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::io;
 use std::io::prelude::*;
+use std::io::SeekFrom;
 use std::iter;
+use std::os::unix::io::{FromRawFd, IntoRawFd, RawFd};
 use std::str;
 
 
 fn main() {
-    let mut table = Table::new();
+    let mut table = db_open("db.mysql");
 
     let mut line = String::new();
     loop {
@@ -117,6 +121,14 @@ fn prepare_statement(command: &str) -> Option<Statement> {
 }
 
 
+fn db_open(path: &str) -> Table {
+    let pager = Pager::new(path);
+    let nrows = pager.file_length / ROW_SIZE;
+
+    Table { nrows, pager }
+}
+
+
 const TABLE_MAX_PAGES: usize = 100;  // An arbitrary maximum.
 const PAGE_SIZE: usize = 4096;  // Equivalent to virtual memory page size on many OSes.
 const ROW_SIZE: usize = 291;  // Calculated from the Row struct.
@@ -127,19 +139,100 @@ const TABLE_MAX_ROWS: usize = ROWS_PER_PAGE * TABLE_MAX_PAGES;
 /// Represents the binary format of a database table.
 struct Table {
     nrows: usize,
+    pager: Pager,
+}
+
+
+impl Drop for Table {
+    fn drop(&mut self) {
+        let num_full_pages = self.nrows / ROWS_PER_PAGE;
+
+        for i in 0..num_full_pages {
+            if self.pager.pages[i].len() > 0 {
+                self.pager.flush(i, PAGE_SIZE);
+            }
+        }
+
+        // Could be some additional rows on a last, partial page.
+        let num_additional_rows = self.nrows % ROWS_PER_PAGE;
+        if num_additional_rows > 0 {
+            if self.pager.pages[num_full_pages].len() > 0 {
+                self.pager.flush(num_full_pages, num_additional_rows * ROW_SIZE);
+            }
+        }
+
+        // Automatically closed when it goes out of scope.
+        let mut _file = unsafe { File::from_raw_fd(self.pager.fd) };
+    }
+}
+
+
+/// An abstraction for fetching pages.
+struct Pager {
+    fd: RawFd,
+    file_length: usize,
     pages: Vec<Vec<u8>>,
 }
 
 
-impl Table {
-    fn new() -> Self {
-        let mut tab = Self { nrows: 0, pages: Vec::with_capacity(TABLE_MAX_PAGES) };
+impl Pager {
+    fn new(path: &str) -> Self {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)
+            .expect("Failed to open file");
 
+        let file_length = file.seek(SeekFrom::End(0)).expect("Seeking end of file failed");
+        let fd = file.into_raw_fd();
+
+        let mut pager = Self {
+            fd, file_length: file_length as usize, pages: Vec::with_capacity(TABLE_MAX_PAGES)
+        };
         for _ in 0..TABLE_MAX_PAGES {
-            tab.pages.push(Vec::new());
+            pager.pages.push(Vec::new());
         }
 
-        tab
+        pager
+    }
+
+    fn allocate_page(&mut self, page_num: usize) {
+        if self.pages[page_num].len() == 0 {
+            // Cache miss
+            self.pages[page_num].reserve(PAGE_SIZE);
+
+            // Zero out memory.
+            for _ in 0..PAGE_SIZE {
+                self.pages[page_num].push(0);
+            }
+
+            let mut npages = self.file_length / PAGE_SIZE;
+
+            if self.file_length % PAGE_SIZE != 0 {
+                npages += 1;
+            }
+
+            if page_num <= npages {
+                let mut file = unsafe { File::from_raw_fd(self.fd) };
+                file.seek(SeekFrom::Start((page_num * PAGE_SIZE) as u64))
+                    .expect("File seek failed");
+
+                file.read(&mut self.pages[page_num]).expect("Reading from file failed");
+
+                self.fd = file.into_raw_fd();
+            }
+        }
+    }
+
+    fn flush(&mut self, page_num: usize, size: usize) {
+        let mut file = unsafe { File::from_raw_fd(self.fd) };
+        file.seek(SeekFrom::Start((page_num * PAGE_SIZE) as u64))
+            .expect("File seek failed");
+
+        file.write(&self.pages[page_num][0..size]).expect("File write failed");
+
+        self.fd = file.into_raw_fd();
     }
 }
 
@@ -162,7 +255,7 @@ fn execute_insert(statement: &Statement, table: &mut Table) -> Result<(), &'stat
     let (page_num, offset) = row_slot(table, table.nrows);
     serialize_row(
         statement.row_to_insert.as_ref().unwrap(),
-        &mut table.pages[page_num],
+        &mut table.pager.pages[page_num],
         offset
     );
     table.nrows += 1;
@@ -174,7 +267,7 @@ fn execute_insert(statement: &Statement, table: &mut Table) -> Result<(), &'stat
 fn execute_select(statement: &Statement, mut table: &mut Table) -> Result<(), &'static str> {
     for i in 0..table.nrows {
         let (page_num, offset) = row_slot(&mut table, i);
-        println!("{:?}", deserialize_row(&table.pages[page_num], offset));
+        println!("{:?}", deserialize_row(&table.pager.pages[page_num], offset));
     }
     Ok(())
 }
@@ -235,13 +328,7 @@ fn deserialize_string(source: &Vec<u8>, offset: usize, length: usize) -> &[u8] {
 /// row requested would be in an unallocated page (which is why Table is mutable).
 fn row_slot<'a>(table: &'a mut Table, row_num: usize) -> (usize, usize) {
     let page_num = row_num / ROWS_PER_PAGE;
-
-    if table.pages[page_num].len() == 0 {
-        table.pages[page_num].reserve(PAGE_SIZE);
-        for _ in 0..PAGE_SIZE {
-            table.pages[page_num].push(0);
-        }
-    }
+    table.pager.allocate_page(page_num);
 
     let row_offset = row_num % ROWS_PER_PAGE;
     return (page_num, row_offset * ROW_SIZE);
