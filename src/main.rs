@@ -67,35 +67,34 @@ struct Row<'a> {
 
 
 fn prepare_statement(command: &str) -> Option<Statement> {
-    if command.starts_with("insert") {
-        let mut iter = command.split_ascii_whitespace();
-        iter.next();
+    if command.starts_with("insert ") {
+        let words: Vec<&str> = command.split_ascii_whitespace().collect();
 
-        let e1 = iter.next();
-        let e2 = iter.next();
-        let e3 = iter.next();
-        let e4 = iter.next();
+        if words.len() == 4 {
+            let idstr = words[1];
+            let username = words[2];
+            let email = words[3];
 
-        match (e1, e2, e3, e4) {
-            (Some(word1), Some(word2), Some(word3), None) => {
-                match word1.parse::<u32>() {
-                    Ok(n) => {
-                        let row = Row { id: n, username: word2, email: word3 };
+            if username.len() > ROW_USERNAME_SIZE || email.len() > ROW_EMAIL_SIZE {
+                return None;
+            }
+
+            match idstr.parse::<u32>() {
+                Ok(n) => {
+                        let row = Row { id: n, username, email };
                         return Some(Statement {
                             kind: StatementKind::Insert,
                             row_to_insert: Some(Box::new(row)),
                         });
-                    },
-                    Err(_) => {
-                        return None;
-                    },
+                },
+                _ => {
+                    return None;
                 }
-            },
-            _ => {
-                return None;
-            },
+            }
+        } else {
+            return None;
         }
-    } else if command.starts_with("select") {
+    } else if command == "select" || command.starts_with("select ") {
         Some(Statement { kind: StatementKind::Select, row_to_insert: None })
     } else {
         None
@@ -269,5 +268,44 @@ mod test {
 
         result = execute_statement(&select, &mut table);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn max_rows() {
+        let mut table = Table::new();
+
+        for _ in 0..TABLE_MAX_ROWS {
+            let insert = Statement {
+                kind: StatementKind::Insert,
+                row_to_insert: Some(Box::new(Row {
+                    id: 1,
+                    username: "jdoe",
+                    email: "jdoe@example.com",
+                })),
+            };
+
+            let result = execute_statement(&insert, &mut table);
+            assert!(result.is_ok());
+        }
+
+        let insert = Statement {
+            kind: StatementKind::Insert,
+            row_to_insert: Some(Box::new(Row {
+                id: 9999,
+                username: "jdoe",
+                email: "jdoe@example.com",
+            })),
+        };
+
+        let result = execute_statement(&insert, &mut table);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn username_too_long() {
+        let result = prepare_statement(
+            "insert 1 a-string-that-has-more-than-32-characters-in-it user@example.com"
+        );
+        assert!(result.is_none());
     }
 }
