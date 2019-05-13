@@ -174,6 +174,36 @@ impl Drop for Table {
 }
 
 
+/// Represents a location in a table.
+struct Cursor<'a> {
+    table: &'a mut Table,
+    rowno: usize,
+    end_of_table: bool,
+}
+
+
+impl<'a> Cursor<'a> {
+    fn from_start(table: &mut Table) -> Cursor {
+        // This line is necessary because `table` is moved into the Cursor object in the next
+        // line, so we can't access table.nrows at that point.
+        let nrows = table.nrows;
+        Cursor { table, rowno: 0, end_of_table: (nrows == 0) }
+    }
+
+    fn from_end(table: &mut Table) -> Cursor {
+        // This line is necessary because `table` is moved into the Cursor object in the next
+        // line, so we can't access table.nrows at that point.
+        let nrows = table.nrows;
+        Cursor { table, rowno: nrows, end_of_table: true }
+    }
+
+    fn advance(&mut self) {
+        self.rowno += 1;
+        self.end_of_table = self.rowno == self.table.nrows;
+    }
+}
+
+
 /// An abstraction for fetching pages.
 struct Pager {
     fd: RawFd,
@@ -254,15 +284,16 @@ fn execute_statement(statement: &Statement, table: &mut Table) -> Result<(), &'s
 
 
 /// Execute an INSERT statement.
-fn execute_insert(statement: &Statement, table: &mut Table) -> Result<(), &'static str> {
+fn execute_insert(statement: &Statement, mut table: &mut Table) -> Result<(), &'static str> {
     if table.nrows >= TABLE_MAX_ROWS {
         return Err("table is full");
     }
 
-    let (page_num, offset) = row_slot(table, table.nrows);
+    let mut cursor = Cursor::from_end(&mut table);
+    let (page_num, offset) = cursor_value(&mut cursor);
     serialize_row(
         statement.row_to_insert.as_ref().unwrap(),
-        &mut table.pager.pages[page_num],
+        &mut cursor.table.pager.pages[page_num],
         offset
     );
     table.nrows += 1;
@@ -272,9 +303,11 @@ fn execute_insert(statement: &Statement, table: &mut Table) -> Result<(), &'stat
 
 /// Execute a SELECT statement.
 fn execute_select(statement: &Statement, mut table: &mut Table) -> Result<(), &'static str> {
-    for i in 0..table.nrows {
-        let (page_num, offset) = row_slot(&mut table, i);
-        println!("{:?}", deserialize_row(&table.pager.pages[page_num], offset));
+    let mut cursor = Cursor::from_start(&mut table);
+    while !cursor.end_of_table {
+        let (page_num, offset) = cursor_value(&mut cursor);
+        println!("{:?}", deserialize_row(&cursor.table.pager.pages[page_num], offset));
+        cursor.advance();
     }
     Ok(())
 }
@@ -331,13 +364,13 @@ fn deserialize_string(source: &Vec<u8>, offset: usize, length: usize) -> &[u8] {
 }
 
 
-/// Return (page number, byte offset) for the given row number. Also allocates a page if the
-/// row requested would be in an unallocated page (which is why Table is mutable).
-fn row_slot<'a>(table: &'a mut Table, row_num: usize) -> (usize, usize) {
-    let page_num = row_num / ROWS_PER_PAGE;
-    table.pager.allocate_page(page_num);
+/// Return (page number, byte offset) for position indicated by the given cursor. Also allocates
+/// a page if the row requested would be in an unallocated page (which is why Cursor is mutable).
+fn cursor_value(cursor: &mut Cursor) -> (usize, usize) {
+    let page_num = cursor.rowno / ROWS_PER_PAGE;
+    cursor.table.pager.allocate_page(page_num);
 
-    let row_offset = row_num % ROWS_PER_PAGE;
+    let row_offset = cursor.rowno % ROWS_PER_PAGE;
     return (page_num, row_offset * ROW_SIZE);
 }
 
