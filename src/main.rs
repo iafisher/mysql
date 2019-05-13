@@ -10,6 +10,7 @@
  * Author:  Ian Fisher (iafisher@protonmail.com)
  * Version: May 2019
  */
+use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
@@ -126,6 +127,12 @@ fn db_open(path: &str) -> Table {
     let nrows = pager.file_length / ROW_SIZE;
 
     Table { nrows, pager }
+}
+
+
+fn db_open_new(path: &str) -> Table {
+    fs::remove_file(&path);
+    db_open(&path)
 }
 
 
@@ -361,7 +368,7 @@ mod test {
 
     #[test]
     fn insert_and_retrieve() {
-        let mut table = Table::new();
+        let mut table = db_open_new("testdb.mysql");
 
         let insert = Statement {
             kind: StatementKind::Insert,
@@ -386,7 +393,7 @@ mod test {
 
     #[test]
     fn max_rows() {
-        let mut table = Table::new();
+        let mut table = db_open_new("testdb.mysql");
 
         for _ in 0..TABLE_MAX_ROWS {
             let insert = Statement {
