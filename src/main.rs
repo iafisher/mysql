@@ -58,9 +58,9 @@ fn main() {
 
 
 #[derive(Debug)]
-struct Statement<'a> {
+struct Statement {
     kind: StatementKind,
-    row_to_insert: Option<Box<Row<'a>>>,
+    row_to_insert: Option<Box<Row>>,
 }
 
 
@@ -78,10 +78,10 @@ const ROW_USERNAME_START: usize = ROW_ID_SIZE;
 const ROW_EMAIL_START: usize = ROW_USERNAME_START + ROW_USERNAME_SIZE;
 
 #[derive(Debug)]
-struct Row<'a> {
+struct Row {
     id: u32,
-    username: &'a str,
-    email: &'a str,
+    username: String,
+    email: String,
 }
 
 
@@ -101,7 +101,11 @@ fn prepare_statement(command: &str) -> Option<Statement> {
 
             match idstr.parse::<u32>() {
                 Ok(n) => {
-                        let row = Row { id: n, username, email };
+                        let row = Row {
+                            id: n,
+                            username: String::from(username),
+                            email: String::from(email)
+                        };
                         return Some(Statement {
                             kind: StatementKind::Insert,
                             row_to_insert: Some(Box::new(row)),
@@ -349,7 +353,11 @@ fn deserialize_row(source: &Vec<u8>, offset: usize) -> Row {
         let email = str::from_utf8_unchecked(
             deserialize_string(&source, offset+ROW_EMAIL_START, ROW_EMAIL_SIZE)
         );
-        return Row { id, username, email };
+        return Row {
+            id,
+            username: String::from(username),
+            email: String::from(email),
+        };
     }
 }
 
@@ -407,8 +415,8 @@ mod test {
             kind: StatementKind::Insert,
             row_to_insert: Some(Box::new(Row {
                 id: 1,
-                username: "jdoe",
-                email: "jdoe@example.com",
+                username: String::from("jdoe"),
+                email: String::from("jdoe@example.com"),
             })),
         };
 
@@ -433,8 +441,8 @@ mod test {
                 kind: StatementKind::Insert,
                 row_to_insert: Some(Box::new(Row {
                     id: 1,
-                    username: "jdoe",
-                    email: "jdoe@example.com",
+                    username: String::from("jdoe"),
+                    email: String::from("jdoe@example.com"),
                 })),
             };
 
@@ -446,8 +454,8 @@ mod test {
             kind: StatementKind::Insert,
             row_to_insert: Some(Box::new(Row {
                 id: 9999,
-                username: "jdoe",
-                email: "jdoe@example.com",
+                username: String::from("jdoe"),
+                email: String::from("jdoe@example.com"),
             })),
         };
 
